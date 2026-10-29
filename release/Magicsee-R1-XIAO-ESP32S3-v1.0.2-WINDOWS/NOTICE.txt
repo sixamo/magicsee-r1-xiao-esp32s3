@@ -1,0 +1,26 @@
+Magicsee R1 USB receiver for XIAO ESP32S3
+Copyright 2026 sixamo
+
+This product includes software developed by the Joypad OS project:
+https://github.com/joypad-ai/joypad-os
+
+Upstream base commit:
+9fa79f4 (feat(nrf): universal gains an optional MAX3421E USB host on the Feather)
+
+The following upstream files are modified by patches/magicsee-r1.patch:
+- esp/main/CMakeLists.txt
+- src/CMakeLists.txt
+- src/bt/bthid/bthid_registry.c
+- src/bt/btstack/bt_device_db.c
+- src/bt/btstack/bt_device_db.h
+- src/usb/usbd/descriptors/sinput_descriptors.h
+- src/usb/usbd/usbd.c
+- src/usb/usbd/usbd.h
+
+The patch also adds:
+- src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
+- src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
+
+Changes add Magicsee R1 BLE report decoding, verified button/four-way analog mapping,
+the Magicsee R1 USB product string, and a distinct per-board USB instance
+suffix for Windows name-cache handling.

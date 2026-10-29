@@ -46,26 +46,22 @@ index 1e13f56..3537fcb 100644
      // properly instead of by the generic gamepad driver.
 diff --git a/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
 new file mode 100644
-index 0000000..e223425
+index 0000000..2f4934d
 --- /dev/null
 +++ b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,121 @@
 +#include "magicsee_r1_ble.h"
 +
 +#include "core/buttons.h"
 +#include "core/input_event.h"
 +#include "core/router/router.h"
 +#include "core/services/players/manager.h"
-+#include "platform/platform.h"
-+
 +#include <stdio.h>
 +#include <string.h>
 +
 +typedef struct {
 +    input_event_t event;
 +    bool initialized;
-+    bool has_report;
-+    uint32_t last_submit_ms;
 +} magicsee_r1_data_t;
 +
 +static magicsee_r1_data_t r1_data[BTHID_MAX_DEVICES];
@@ -91,8 +87,6 @@ index 0000000..e223425
 +            r1_data[i].event.instance = 0;
 +            r1_data[i].event.button_count = 6;
 +            r1_data[i].event.valid_fields = INPUT_VALID_BUTTONS | INPUT_VALID_L_STICK;
-+            r1_data[i].has_report = false;
-+            r1_data[i].last_submit_ms = 0;
 +            device->driver_data = &r1_data[i];
 +            printf("[MAGICSEE_R1] Driver ready for %s\n", device->name);
 +            return true;
@@ -106,8 +100,6 @@ index 0000000..e223425
 +{
 +    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
 +    if (!state || !data) return;
-+
-+    uint32_t now = platform_time_ms();
 +
 +    // Captured XIAO reports are exactly: report ID 0x04, buttons, direction.
 +    if (len != 3 || data[0] != 0x04) return;
@@ -154,22 +146,6 @@ index 0000000..e223425
 +
 +    state->event.buttons = buttons;
 +    router_submit_input(&state->event);
-+    state->has_report = true;
-+    state->last_submit_ms = now;
-+}
-+
-+// Re-publish the current state at 125 Hz so USB maintains the latest state.
-+static void r1_task(bthid_device_t* device)
-+{
-+    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
-+    if (!state || !state->has_report) return;
-+
-+    uint32_t now = platform_time_ms();
-+
-+    if ((uint32_t)(now - state->last_submit_ms) < 8u) return;
-+
-+    router_submit_input(&state->event);
-+    state->last_submit_ms = now;
 +}
 +
 +static void r1_disconnect(bthid_device_t* device)
@@ -187,7 +163,7 @@ index 0000000..e223425
 +    .match = r1_match,
 +    .init = r1_init,
 +    .process_report = r1_process_report,
-+    .task = r1_task,
++    .task = NULL,
 +    .disconnect = r1_disconnect,
 +};
 +

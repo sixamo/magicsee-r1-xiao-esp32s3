@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.2 — 2026-10-29
+
+- Removes the 125 Hz re-publication of the last input state.
+- Sends USB input only when a new R1 BLE report arrives, matching the
+  event-driven behavior of v1.0.0 while retaining the left analog-stick output.
+- Fixes direction input continuing after the physical stick is released.
+- Preserves the verified three-byte parser, four cardinal analog positions,
+  all six button mappings, Steer behavior, USB name, and per-board identity.
+
+This change was verified on the physical R1/XIAO receiver before release.
+
 ## v1.0.1 — 2026-10-29
 
 - Outputs the R1 direction as fixed cardinal positions on the USB left analog stick.

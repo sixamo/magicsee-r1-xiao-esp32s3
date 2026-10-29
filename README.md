@@ -13,6 +13,7 @@ Seeed Studio XIAO ESP32S3と付属外付けアンテナを使用します。2組
 
 - R1のジョイスティックをUSB左アナログスティックの固定4方向として出力
 - 傾けている間は長押しを維持し、中立`0x50`またはBLE切断で解除
+- R1から状態が届いた時だけUSBへ送信し、不要な周期再送は行わない
 - 斜め補間は行わず、左上／右上の報告値は上として扱う
 - USB製品名：`Magicsee R1`
 - XIAO固有シリアルを維持するため、複数受信機を別デバイスとして識別可能
@@ -49,12 +50,12 @@ Seeed Studio XIAO ESP32S3と付属外付けアンテナを使用します。2組
 5. R1の`M+B`を長押しし、LEDが高速点滅したら接続を待つ。
 
 書込みイメージを直接使う場合は、
-`firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.1.merged.bin`をESP32-S3の
+`firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.2.merged.bin`をESP32-S3の
 アドレス`0x0`へ書き込みます。
 
 ```powershell
 esptool --chip esp32s3 --port COM4 --baud 460800 write-flash 0x0 `
-  firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.1.merged.bin
+  firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.2.merged.bin
 ```
 
 ## ソースからの再現
@@ -91,7 +92,8 @@ git apply ../magicsee-r1-xiao-esp32s3/patches/magicsee-r1.patch
 - Magicsee R1 × 2
 - Windows 11
 - Steam controller test
-- BLE接続、全6ボタン、4方向長押し、中立解除、複数受信機の個別認識
+- BLE接続、全6ボタン、4方向長押し、中立解除、周期再送撤去後の解除挙動、
+  複数受信機の個別認識
 
 ## 既知の制約
 
