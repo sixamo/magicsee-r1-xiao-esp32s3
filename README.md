@@ -11,9 +11,9 @@ Seeed Studio XIAO ESP32S3と付属外付けアンテナを使用します。2組
 
 ## 動作仕様
 
-- R1のジョイスティックを安定した4方向デジタル十字キーとして出力
+- R1のジョイスティックをUSB左アナログスティックの固定4方向として出力
 - 傾けている間は長押しを維持し、中立`0x50`またはBLE切断で解除
-- 斜め同時押しは行わず、左上／右上は上として扱う
+- 斜め補間は行わず、左上／右上の報告値は上として扱う
 - USB製品名：`Magicsee R1`
 - XIAO固有シリアルを維持するため、複数受信機を別デバイスとして識別可能
 
@@ -49,12 +49,12 @@ Seeed Studio XIAO ESP32S3と付属外付けアンテナを使用します。2組
 5. R1の`M+B`を長押しし、LEDが高速点滅したら接続を待つ。
 
 書込みイメージを直接使う場合は、
-`firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.0.merged.bin`をESP32-S3の
+`firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.1.merged.bin`をESP32-S3の
 アドレス`0x0`へ書き込みます。
 
 ```powershell
 esptool --chip esp32s3 --port COM4 --baud 460800 write-flash 0x0 `
-  firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.0.merged.bin
+  firmware/Magicsee-R1-XIAO-ESP32S3-v1.0.1.merged.bin
 ```
 
 ## ソースからの再現
@@ -92,6 +92,14 @@ git apply ../magicsee-r1-xiao-esp32s3/patches/magicsee-r1.patch
 - Windows 11
 - Steam controller test
 - BLE接続、全6ボタン、4方向長押し、中立解除、複数受信機の個別認識
+
+## 既知の制約
+
+- R1のM+Bモードは、連続回転中にも物理的な中立と同じ`0x50`を送るため、
+  円を描くような連続回転や下側の斜め入力は正確に復元できません。
+- 本版は誤入力や中立復帰の遅延を避けるため、受信した上下左右と中立を
+  そのままUSB左アナログスティックへ変換します。単独の4方向操作を想定しています。
+- 中立解除の時刻は、R1から`0x50`が届く時刻に依存します。
 
 ## ライセンス
 

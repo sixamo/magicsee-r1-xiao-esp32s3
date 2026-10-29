@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.1 — 2026-10-29
+
+- Outputs the R1 direction as fixed cardinal positions on the USB left analog stick.
+- Decodes only the hardware-captured three-byte report format: `04 buttons direction`.
+- Removes experimental diagonal synthesis, rotation prediction, center-delay logic,
+  and diagnostic output.
+- Applies center immediately when the R1 sends direction value `0x50`.
+- Preserves all six verified button mappings, USB name, pairing behavior, and
+  per-board identity.
+
+Known limitation: the R1 emits the same `0x50` value during some continuous
+rotations and when physically centered. Continuous circular motion and lower
+diagonals therefore cannot be reconstructed reliably from M+B reports.
+
 ## v1.0.0 — 2026-10-29
 
 First hardware-verified public release.

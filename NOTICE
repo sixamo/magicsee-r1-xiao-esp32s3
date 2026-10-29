@@ -21,7 +21,6 @@ The patch also adds:
 - src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
 - src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
 
-Changes add Magicsee R1 BLE report decoding, verified button/D-pad mapping,
+Changes add Magicsee R1 BLE report decoding, verified button/four-way analog mapping,
 the Magicsee R1 USB product string, and a distinct per-board USB instance
 suffix for Windows name-cache handling.
-

@@ -23,7 +23,7 @@ index 453e6ff..bde529a 100644
      # MouthPad is connected; inert otherwise). Companion to the mouthpad_ble HID
      # driver so every BLE app gains MouthPad support without a dedicated app.
 diff --git a/src/bt/bthid/bthid_registry.c b/src/bt/bthid/bthid_registry.c
-index 1e13f56..9197811 100644
+index 1e13f56..3537fcb 100644
 --- a/src/bt/bthid/bthid_registry.c
 +++ b/src/bt/bthid/bthid_registry.c
 @@ -19,6 +19,7 @@
@@ -38,12 +38,178 @@ index 1e13f56..9197811 100644
      // decoded deterministically instead of relying on HID descriptor parsing.
      ipega_bt_register();
  
-+    // Magicsee R1 M+B mode: non-standard two-byte HID input report.
++    // Magicsee R1 M+B mode: captured three-byte HID input report.
 +    magicsee_r1_ble_register();
 +
      // JoypadOS SInput controller over BLE (matches by VID/PID 2E8A:10C6 or name).
      // Must register before the generic fallback so SInput's report ID 1 is parsed
      // properly instead of by the generic gamepad driver.
+diff --git a/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
+new file mode 100644
+index 0000000..e223425
+--- /dev/null
++++ b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
+@@ -0,0 +1,145 @@
++#include "magicsee_r1_ble.h"
++
++#include "core/buttons.h"
++#include "core/input_event.h"
++#include "core/router/router.h"
++#include "core/services/players/manager.h"
++#include "platform/platform.h"
++
++#include <stdio.h>
++#include <string.h>
++
++typedef struct {
++    input_event_t event;
++    bool initialized;
++    bool has_report;
++    uint32_t last_submit_ms;
++} magicsee_r1_data_t;
++
++static magicsee_r1_data_t r1_data[BTHID_MAX_DEVICES];
++
++static bool r1_match(const char* name, const uint8_t* cod,
++                     uint16_t vid, uint16_t pid, bool is_ble)
++{
++    (void)cod;
++    (void)vid;
++    (void)pid;
++    return is_ble && name && strstr(name, "Magicsee R1") != NULL;
++}
++
++static bool r1_init(bthid_device_t* device)
++{
++    for (int i = 0; i < BTHID_MAX_DEVICES; ++i) {
++        if (!r1_data[i].initialized) {
++            init_input_event(&r1_data[i].event);
++            r1_data[i].initialized = true;
++            r1_data[i].event.type = INPUT_TYPE_GAMEPAD;
++            r1_data[i].event.transport = INPUT_TRANSPORT_BT_BLE;
++            r1_data[i].event.dev_addr = device->conn_index;
++            r1_data[i].event.instance = 0;
++            r1_data[i].event.button_count = 6;
++            r1_data[i].event.valid_fields = INPUT_VALID_BUTTONS | INPUT_VALID_L_STICK;
++            r1_data[i].has_report = false;
++            r1_data[i].last_submit_ms = 0;
++            device->driver_data = &r1_data[i];
++            printf("[MAGICSEE_R1] Driver ready for %s\n", device->name);
++            return true;
++        }
++    }
++    return false;
++}
++
++static void r1_process_report(bthid_device_t* device,
++                              const uint8_t* data, uint16_t len)
++{
++    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
++    if (!state || !data) return;
++
++    uint32_t now = platform_time_ms();
++
++    // Captured XIAO reports are exactly: report ID 0x04, buttons, direction.
++    if (len != 3 || data[0] != 0x04) return;
++    uint8_t raw_buttons = data[1];
++    uint8_t direction = data[2];
++
++    uint32_t buttons = 0;
++    // bt2usb uses Nintendo/Switch face labels: B1=B, B2=A, B3=Y, B4=X.
++    if (raw_buttons & 0x10) buttons |= JP_BUTTON_B3; // R1 A -> Y
++    if (raw_buttons & 0x01) buttons |= JP_BUTTON_B1; // R1 B -> B
++    if (raw_buttons & 0x08) buttons |= JP_BUTTON_B4; // R1 C -> X
++    if (raw_buttons & 0x02) buttons |= JP_BUTTON_B2; // R1 D -> A
++    if (raw_buttons & 0x40) buttons |= JP_BUTTON_S1; // ENTER -> Select
++    if (raw_buttons & 0x80) buttons |= JP_BUTTON_S2; // RETURN -> Enter
++
++    // Four-way vendor mapping. Upper diagonal zones intentionally collapse to
++    // Up; the remaining proven values map directly to one cardinal direction.
++    switch (direction) {
++        case 0x00:
++        case 0x10:
++        case 0x20:
++            state->event.analog[ANALOG_LX] = 128;
++            state->event.analog[ANALOG_LY] = 0;
++            break;
++        case 0x40:
++            state->event.analog[ANALOG_LX] = 0;
++            state->event.analog[ANALOG_LY] = 128;
++            break;
++        case 0x60:
++            state->event.analog[ANALOG_LX] = 255;
++            state->event.analog[ANALOG_LY] = 128;
++            break;
++        case 0x90:
++            state->event.analog[ANALOG_LX] = 128;
++            state->event.analog[ANALOG_LY] = 255;
++            break;
++        case 0x50:
++            state->event.analog[ANALOG_LX] = 128;
++            state->event.analog[ANALOG_LY] = 128;
++            break;
++        default:
++            break;
++    }
++
++    state->event.buttons = buttons;
++    router_submit_input(&state->event);
++    state->has_report = true;
++    state->last_submit_ms = now;
++}
++
++// Re-publish the current state at 125 Hz so USB maintains the latest state.
++static void r1_task(bthid_device_t* device)
++{
++    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
++    if (!state || !state->has_report) return;
++
++    uint32_t now = platform_time_ms();
++
++    if ((uint32_t)(now - state->last_submit_ms) < 8u) return;
++
++    router_submit_input(&state->event);
++    state->last_submit_ms = now;
++}
++
++static void r1_disconnect(bthid_device_t* device)
++{
++    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
++    if (!state) return;
++    router_device_disconnected(state->event.dev_addr, state->event.instance);
++    remove_players_by_address(state->event.dev_addr, state->event.instance);
++    init_input_event(&state->event);
++    state->initialized = false;
++}
++
++const bthid_driver_t magicsee_r1_ble_driver = {
++    .name = "Magicsee R1 BLE",
++    .match = r1_match,
++    .init = r1_init,
++    .process_report = r1_process_report,
++    .task = r1_task,
++    .disconnect = r1_disconnect,
++};
++
++void magicsee_r1_ble_register(void)
++{
++    bthid_register_driver(&magicsee_r1_ble_driver);
++}
+diff --git a/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
+new file mode 100644
+index 0000000..7eafe60
+--- /dev/null
++++ b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
+@@ -0,0 +1,9 @@
++#ifndef MAGICSEE_R1_BLE_H
++#define MAGICSEE_R1_BLE_H
++
++#include "bt/bthid/bthid.h"
++
++extern const bthid_driver_t magicsee_r1_ble_driver;
++void magicsee_r1_ble_register(void);
++
++#endif
 diff --git a/src/bt/btstack/bt_device_db.c b/src/bt/btstack/bt_device_db.c
 index 6a9cdd6..c1be2c7 100644
 --- a/src/bt/btstack/bt_device_db.c
@@ -128,158 +294,3 @@ index 9114f75..2e9eb6c 100644
  
  // Xbox Original Mode (XID)
  #define USB_XOG_VID            0x045E  // Microsoft
-diff --git a/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
-new file mode 100644
-index 0000000..7eafe60
---- /dev/null
-+++ b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.h
-@@ -0,0 +1,9 @@
-+#ifndef MAGICSEE_R1_BLE_H
-+#define MAGICSEE_R1_BLE_H
-+
-+#include "bt/bthid/bthid.h"
-+
-+extern const bthid_driver_t magicsee_r1_ble_driver;
-+void magicsee_r1_ble_register(void);
-+
-+#endif
-diff --git a/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
-new file mode 100644
-index 0000000..05d614e
---- /dev/null
-+++ b/src/bt/bthid/devices/vendors/magicsee/magicsee_r1_ble.c
-@@ -0,0 +1,134 @@
-+#include "magicsee_r1_ble.h"
-+
-+#include "core/buttons.h"
-+#include "core/input_event.h"
-+#include "core/router/router.h"
-+#include "core/services/players/manager.h"
-+
-+#include <stdio.h>
-+#include <string.h>
-+
-+typedef struct {
-+    input_event_t event;
-+    bool initialized;
-+    uint32_t last_direction;
-+} magicsee_r1_data_t;
-+
-+static magicsee_r1_data_t r1_data[BTHID_MAX_DEVICES];
-+
-+static bool r1_match(const char* name, const uint8_t* cod,
-+                     uint16_t vid, uint16_t pid, bool is_ble)
-+{
-+    (void)cod;
-+    (void)vid;
-+    (void)pid;
-+    return is_ble && name && strstr(name, "Magicsee R1") != NULL;
-+}
-+
-+static bool r1_init(bthid_device_t* device)
-+{
-+    for (int i = 0; i < BTHID_MAX_DEVICES; ++i) {
-+        if (!r1_data[i].initialized) {
-+            init_input_event(&r1_data[i].event);
-+            r1_data[i].initialized = true;
-+            r1_data[i].event.type = INPUT_TYPE_GAMEPAD;
-+            r1_data[i].event.transport = INPUT_TRANSPORT_BT_BLE;
-+            r1_data[i].event.dev_addr = device->conn_index;
-+            r1_data[i].event.instance = 0;
-+            r1_data[i].event.button_count = 6;
-+            r1_data[i].event.valid_fields = INPUT_VALID_BUTTONS;
-+            r1_data[i].last_direction = 0;
-+            device->driver_data = &r1_data[i];
-+            printf("[MAGICSEE_R1] Driver ready for %s\n", device->name);
-+            return true;
-+        }
-+    }
-+    return false;
-+}
-+
-+static void r1_process_report(bthid_device_t* device,
-+                              const uint8_t* data, uint16_t len)
-+{
-+    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
-+    if (!state || !data) return;
-+
-+    if (len < 2) return;
-+
-+    // The R1 payload is always the final two bytes: buttons, direction.
-+    // Direct notifications contain exactly those two bytes. BTstack's HIDS
-+    // client may prepend the HID report ID, while Linux captures observed on
-+    // this device include a longer 0x1B-prefixed envelope. Using the trailing
-+    // pair supports all three paths without assuming a report-ID value.
-+    uint8_t raw_buttons = data[len - 2];
-+    uint8_t direction = data[len - 1];
-+
-+    uint32_t buttons = 0;
-+    // bt2usb uses Nintendo/Switch face labels: B1=B, B2=A, B3=Y, B4=X.
-+    if (raw_buttons & 0x10) buttons |= JP_BUTTON_B3; // R1 A -> Y
-+    if (raw_buttons & 0x01) buttons |= JP_BUTTON_B1; // R1 B -> B
-+    if (raw_buttons & 0x08) buttons |= JP_BUTTON_B4; // R1 C -> X
-+    if (raw_buttons & 0x02) buttons |= JP_BUTTON_B2; // R1 D -> A
-+    if (raw_buttons & 0x40) buttons |= JP_BUTTON_S1; // ENTER -> Select
-+    if (raw_buttons & 0x80) buttons |= JP_BUTTON_S2; // RETURN -> Enter
-+
-+    uint32_t dpad = state->last_direction;
-+    bool direction_valid = true;
-+    switch (direction) {
-+        // Expose the R1 stick as a four-way digital D-pad.  The upper-left
-+        // and upper-right values are deliberately collapsed to Up; no
-+        // diagonal or simultaneous D-pad buttons are emitted.  Every valid
-+        // direction replaces the previous one, while the explicit neutral
-+        // value releases it.  This avoids stale-axis state when the stick is
-+        // rotated and still lets a held direction remain pressed until the
-+        // R1 sends 0x50 on return to centre.
-+        case 0x00: // upper-left
-+        case 0x10: // up
-+        case 0x20: // upper-right
-+            dpad = JP_BUTTON_DU;
-+            break;
-+        case 0x40:
-+            dpad = JP_BUTTON_DL;
-+            break;
-+        case 0x60:
-+            dpad = JP_BUTTON_DR;
-+            break;
-+        case 0x90:
-+            dpad = JP_BUTTON_DD;
-+            break;
-+        case 0x50:
-+            dpad = 0;
-+            break;
-+        default: direction_valid = false; break;
-+    }
-+
-+    if (direction_valid) {
-+        state->last_direction = dpad;
-+    }
-+
-+    state->event.buttons = buttons | state->last_direction;
-+    router_submit_input(&state->event);
-+}
-+
-+static void r1_disconnect(bthid_device_t* device)
-+{
-+    magicsee_r1_data_t* state = (magicsee_r1_data_t*)device->driver_data;
-+    if (!state) return;
-+    router_device_disconnected(state->event.dev_addr, state->event.instance);
-+    remove_players_by_address(state->event.dev_addr, state->event.instance);
-+    init_input_event(&state->event);
-+    state->initialized = false;
-+}
-+
-+const bthid_driver_t magicsee_r1_ble_driver = {
-+    .name = "Magicsee R1 BLE",
-+    .match = r1_match,
-+    .init = r1_init,
-+    .process_report = r1_process_report,
-+    .task = NULL,
-+    .disconnect = r1_disconnect,
-+};
-+
-+void magicsee_r1_ble_register(void)
-+{
-+    bthid_register_driver(&magicsee_r1_ble_driver);
-+}
